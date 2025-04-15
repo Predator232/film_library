@@ -1,0 +1,29 @@
+.genres-container {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+    gap: 10px;
+    margin-top: 10px;
+}
+
+.genre-checkbox {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+}
+
+.genre-checkbox input[type="checkbox"] {
+    width: 16px;
+    height: 16px;
+    cursor: pointer;
+}
+
+.genre-checkbox label {
+    cursor: pointer;
+    font-size: 0.9em;
+    color: #666;
+}
+
+.genre-checkbox input[type="checkbox"]:checked + label {
+    color: #ff5500;
+    font-weight: 500;
+} 
