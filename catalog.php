@@ -1,20 +1,10 @@
 <?php
 session_start();
+require_once 'config.php';
 
 // Сообщение об успешной покупке
 $success = false;
 $error = '';
-
-// Подключение к БД
-$servername = "127.0.0.1:3306";
-$username = "root";
-$password = "";
-$dbname = "film_library";
-
-$conn = new mysqli($servername, $username, $password, $dbname);
-if ($conn->connect_error) {
-    die("Ошибка подключения: " . $conn->connect_error);
-}
 
 // Обработка покупки подписки
 if ($_SERVER["REQUEST_METHOD"] === "POST" && isset($_POST['subscription_id'])) {
@@ -26,58 +16,58 @@ if ($_SERVER["REQUEST_METHOD"] === "POST" && isset($_POST['subscription_id'])) {
     $user_id = $_SESSION['user_id'];
     $subscription_id = intval($_POST['subscription_id']);
 
-    // Проверяем, есть ли у пользователя активная подписка
-    $check_query = "SELECT * FROM user_subscriptions 
-                   WHERE user_id = ? AND (end_date IS NULL OR end_date > NOW())";
-    $check_stmt = $conn->prepare($check_query);
-    $check_stmt->bind_param("i", $user_id);
-    $check_stmt->execute();
-    $active_subscription = $check_stmt->get_result();
+    try {
+        // Проверяем, есть ли у пользователя активная подписка
+        $check_query = "SELECT * FROM users 
+                       WHERE user_id = ? AND (subscription_end IS NULL OR subscription_end > NOW())";
+        $check_stmt = $pdo->prepare($check_query);
+        $check_stmt->execute([$user_id]);
+        $active_subscription = $check_stmt->fetchAll(PDO::FETCH_ASSOC);
 
-    if ($active_subscription->num_rows > 0) {
-        $error = "У вас уже есть активная подписка.";
-    } else {
-        // Получаем информацию о подписке
-        $sub_query = "SELECT duration FROM subscriptions WHERE subscription_id = ?";
-        $sub_stmt = $conn->prepare($sub_query);
-        $sub_stmt->bind_param("i", $subscription_id);
-        $sub_stmt->execute();
-        $sub_result = $sub_stmt->get_result();
-        $sub_data = $sub_result->fetch_assoc();
-
-        if ($sub_data) {
-            // Рассчитываем дату окончания подписки
-            $end_date = date('Y-m-d H:i:s', strtotime('+' . $sub_data['duration'] . ' months'));
-
-            // Добавляем подписку
-            $stmt = $conn->prepare("INSERT INTO user_subscriptions (user_id, subscription_id, end_date) VALUES (?, ?, ?)");
-            $stmt->bind_param("iis", $user_id, $subscription_id, $end_date);
-            
-            if ($stmt->execute()) {
-                $success = true;
-            } else {
-                $error = "Ошибка при покупке подписки: " . $conn->error;
-            }
-            $stmt->close();
+        if (count($active_subscription) > 0) {
+            $error = "У вас уже есть активная подписка.";
         } else {
-            $error = "Подписка не найдена.";
+            // Получаем информацию о подписке
+            $sub_query = "SELECT duration FROM subscriptions WHERE subscription_id = ?";
+            $sub_stmt = $pdo->prepare($sub_query);
+            $sub_stmt->execute([$subscription_id]);
+            $sub_data = $sub_stmt->fetch(PDO::FETCH_ASSOC);
+
+            if ($sub_data) {
+                // Рассчитываем дату окончания подписки
+                $end_date = date('Y-m-d H:i:s', strtotime('+' . $sub_data['duration'] . ' months'));
+
+                // Обновляем подписку пользователя
+                $update_stmt = $pdo->prepare("UPDATE users SET subscription_id = ?, subscription_start = NOW(), subscription_end = ? WHERE user_id = ?");
+                if ($update_stmt->execute([$subscription_id, $end_date, $user_id])) {
+                    $success = true;
+                } else {
+                    $error = "Ошибка при покупке подписки.";
+                }
+            } else {
+                $error = "Подписка не найдена.";
+            }
         }
-        $sub_stmt->close();
+    } catch(PDOException $e) {
+        $error = "Ошибка при покупке подписки: " . $e->getMessage();
     }
-    $check_stmt->close();
 }
+
+if (!isset($_SESSION['user_id'])) {
+    header("Location: login.php");
+    exit();
+}
+
+$user_id = $_SESSION['user_id'];
+$is_admin = $_SESSION['is_admin'] ?? false;
 
 // Получаем список подписок
-$query = "SELECT * FROM subscriptions ORDER BY price ASC";
-$result = mysqli_query($conn, $query);
-
-if (!$result) {
-    die("Ошибка запроса: " . mysqli_error($conn));
-}
-
-$subscriptions = [];
-while ($row = mysqli_fetch_assoc($result)) {
-    $subscriptions[] = $row;
+try {
+    $query = "SELECT * FROM subscriptions ORDER BY price ASC";
+    $stmt = $pdo->query($query);
+    $subscriptions = $stmt->fetchAll(PDO::FETCH_ASSOC);
+} catch(PDOException $e) {
+    $error = "Ошибка запроса: " . $e->getMessage();
 }
 ?>
 
@@ -86,104 +76,7 @@ while ($row = mysqli_fetch_assoc($result)) {
 <head>
   <meta charset="UTF-8">
   <title>Каталог подписок</title>
-  <style>
-    body {
-      margin: 0;
-      font-family: 'Segoe UI', sans-serif;
-      background-color: #fff;
-      color: #333;
-    }
-    .header {
-      background-color: #181818;
-      padding: 15px 30px;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-    }
-    .logo {
-      color: #fff;
-      font-size: 1.5em;
-      font-weight: bold;
-    }
-    .nav a {
-      color: #ff5500;
-      text-decoration: none;
-      margin-left: 20px;
-      font-weight: 500;
-    }
-    .nav a:hover {
-      text-decoration: underline;
-    }
-    main {
-      text-align: center;
-      padding: 40px 20px;
-    }
-    .subscription-group {
-      margin-bottom: 50px;
-    }
-    .subscription-group h2 {
-      color: #ff5500;
-      margin-bottom: 20px;
-    }
-    .catalog {
-      display: flex;
-      flex-wrap: wrap;
-      justify-content: center;
-      gap: 20px;
-    }
-    .plan {
-      border: 2px solid #ff5500;
-      border-radius: 10px;
-      padding: 20px;
-      width: 250px;
-      background-color: #fff;
-      transition: transform 0.3s;
-    }
-    .plan:hover {
-      transform: scale(1.03);
-    }
-    .plan h3 {
-      margin-bottom: 10px;
-      color: #ff5500;
-    }
-    .plan p {
-      margin-bottom: 10px;
-    }
-    .plan button {
-      background-color: #ff5500;
-      color: white;
-      padding: 10px 20px;
-      border: none;
-      border-radius: 25px;
-      cursor: pointer;
-      transition: background-color 0.3s;
-    }
-    .plan button:hover {
-      background-color: #e64a00;
-    }
-    .footer {
-      background-color: #f2f2f2;
-      padding: 20px 30px;
-      text-align: center;
-      font-size: 0.9em;
-      color: #777;
-      margin-top: 60px;
-    }
-    .success-message {
-      background: #d4edda;
-      color: #155724;
-      padding: 15px;
-      border-radius: 5px;
-      margin-bottom: 20px;
-    }
-    .error-message {
-      background: #f8d7da;
-      color: #721c24;
-      padding: 15px;
-      border-radius: 5px;
-      margin-bottom: 20px;
-    }
-  </style>
+  <link rel="stylesheet" href="styles.css">
 </head>
 <body>
   <header class="header">
@@ -193,7 +86,7 @@ while ($row = mysqli_fetch_assoc($result)) {
     </div>
     <nav class="nav">
       <a href="index.php">Главная</a>
-      <a href="movies.php">Фильмы</a>
+      <a href="gallery.php">Фильмы</a>
       <a href="catalog.php">Каталог</a>
       <a href="news.php">Новости</a>
       <a href="contact.php">Контакты</a>
@@ -234,7 +127,7 @@ while ($row = mysqli_fetch_assoc($result)) {
                 <?php if (isset($_SESSION['user_id'])): ?>
                     <form method="POST" action="">
                         <input type="hidden" name="subscription_id" value="<?php echo $subscription['subscription_id']; ?>">
-                        <button type="submit">Купить</button>
+                        <button type="submit" class="btn">Купить</button>
                     </form>
                 <?php else: ?>
                     <p><a href="login.php">Войдите</a> для покупки подписки</p>
